@@ -1,3 +1,13 @@
+/**
+ * Dating Techub Backend Server
+ * Real-time matching and WebRTC signaling server
+ *
+ * Features:
+ * - User matching based on interests
+ * - WebRTC signaling (offer/answer/ICE candidates)
+ * - Real-time messaging and transcript sharing
+ */
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -15,20 +25,26 @@ const io = new Server(server, {
   }
 });
 
-// Lưu trữ thông tin users đang chờ match
+// In-memory storage for users and matches
+// TODO: Consider using Redis or database for production
 const waitingUsers = new Map(); // userId -> { userData, interests, socketId }
-const activeMatches = new Map(); // matchId -> { user1, user2, socketId1, socketId2 }
+const activeMatches = new Map(); // matchId -> { user1, user2, socketId1, socketId2, commonInterests }
 
-// Hàm tìm match dựa trên interests
+/**
+ * Find a matching user based on common interests
+ * @param {string} userId - Current user ID
+ * @param {string[]} interests - User's interests
+ * @returns {Object|null} Match object or null if no match found
+ */
 function findMatch(userId, interests) {
   for (const [otherUserId, otherUser] of waitingUsers.entries()) {
     if (otherUserId === userId) continue;
-    
+
     // Kiểm tra xem có interests chung không
-    const commonInterests = interests.filter(interest => 
+    const commonInterests = interests.filter(interest =>
       otherUser.interests.includes(interest)
     );
-    
+
     // Nếu có ít nhất 1 interest chung, match
     if (commonInterests.length > 0) {
       return {
@@ -42,14 +58,19 @@ function findMatch(userId, interests) {
   return null;
 }
 
+// Socket.io connection handler
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  console.log(`[${new Date().toISOString()}] User connected: ${socket.id}`);
 
-  // User đăng ký và chờ match
+  /**
+   * Register user and start matching process
+   * Event: 'register'
+   * Data: { userId, userData, interests }
+   */
   socket.on('register', (data) => {
     const { userId, userData, interests } = data;
     console.log('User registered:', userId, interests);
-    
+
     // Lưu user vào waiting list
     waitingUsers.set(userId, {
       userData,
@@ -59,19 +80,19 @@ io.on('connection', (socket) => {
 
     // Tìm match
     const match = findMatch(userId, interests);
-    
+
     if (match) {
       // Xóa cả hai user khỏi waiting list
       waitingUsers.delete(userId);
       waitingUsers.delete(match.matchedUserId);
-      
+
       // Tạo match
       activeMatches.set(match.matchId, {
         user1: { userId, userData, socketId: socket.id },
-        user2: { 
-          userId: match.matchedUserId, 
-          userData: match.matchedUser.userData, 
-          socketId: match.matchedUser.socketId 
+        user2: {
+          userId: match.matchedUserId,
+          userData: match.matchedUser.userData,
+          socketId: match.matchedUser.socketId
         },
         commonInterests: match.commonInterests
       });
@@ -96,16 +117,20 @@ io.on('connection', (socket) => {
     }
   });
 
-  // WebRTC Signaling - Offer
+  /**
+   * WebRTC Signaling - Handle call offer
+   * Event: 'call-offer'
+   * Data: { matchId, offer, callType }
+   */
   socket.on('call-offer', (data) => {
     const { matchId, offer, callType } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('call-offer', {
         matchId,
         offer,
@@ -115,16 +140,20 @@ io.on('connection', (socket) => {
     }
   });
 
-  // WebRTC Signaling - Answer
+  /**
+   * WebRTC Signaling - Handle call answer
+   * Event: 'call-answer'
+   * Data: { matchId, answer }
+   */
   socket.on('call-answer', (data) => {
     const { matchId, answer } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('call-answer', {
         matchId,
         answer
@@ -132,16 +161,20 @@ io.on('connection', (socket) => {
     }
   });
 
-  // WebRTC Signaling - ICE Candidate
+  /**
+   * WebRTC Signaling - Handle ICE candidate
+   * Event: 'ice-candidate'
+   * Data: { matchId, candidate }
+   */
   socket.on('ice-candidate', (data) => {
     const { matchId, candidate } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('ice-candidate', {
         matchId,
         candidate
@@ -153,12 +186,12 @@ io.on('connection', (socket) => {
   socket.on('call-accept', (data) => {
     const { matchId } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('call-accepted', {
         matchId
       });
@@ -168,12 +201,12 @@ io.on('connection', (socket) => {
   socket.on('call-reject', (data) => {
     const { matchId } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('call-rejected', {
         matchId
       });
@@ -184,12 +217,12 @@ io.on('connection', (socket) => {
   socket.on('end-call', (data) => {
     const { matchId } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('call-ended', {
         matchId
       });
@@ -200,12 +233,12 @@ io.on('connection', (socket) => {
   socket.on('send-message', (data) => {
     const { matchId, message } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       io.to(targetSocketId).emit('new-message', {
         matchId,
         message,
@@ -218,12 +251,12 @@ io.on('connection', (socket) => {
   socket.on('send-transcript', (data) => {
     const { matchId, transcript, speaker } = data;
     const match = activeMatches.get(matchId);
-    
+
     if (match) {
-      const targetSocketId = match.user1.socketId === socket.id 
-        ? match.user2.socketId 
+      const targetSocketId = match.user1.socketId === socket.id
+        ? match.user2.socketId
         : match.user1.socketId;
-      
+
       // Send to the other user with reversed speaker label
       io.to(targetSocketId).emit('new-transcript', {
         matchId,
@@ -234,10 +267,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Disconnect
+  /**
+   * Handle user disconnect
+   * Clean up waiting users and active matches
+   */
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-    
+    console.log(`[${new Date().toISOString()}] User disconnected: ${socket.id}`);
+
     // Xóa user khỏi waiting list nếu có
     for (const [userId, user] of waitingUsers.entries()) {
       if (user.socketId === socket.id) {
@@ -245,14 +281,14 @@ io.on('connection', (socket) => {
         break;
       }
     }
-    
+
     // Xóa match nếu có
     for (const [matchId, match] of activeMatches.entries()) {
       if (match.user1.socketId === socket.id || match.user2.socketId === socket.id) {
-        const otherSocketId = match.user1.socketId === socket.id 
-          ? match.user2.socketId 
+        const otherSocketId = match.user1.socketId === socket.id
+          ? match.user2.socketId
           : match.user1.socketId;
-        
+
         io.to(otherSocketId).emit('partner-disconnected', { matchId });
         activeMatches.delete(matchId);
         break;
@@ -261,10 +297,15 @@ io.on('connection', (socket) => {
   });
 });
 
+// Start server
 const PORT = process.env.PORT || 3001;
-const HOST = process.env.HOST || '0.0.0.0'; // Listen on all interfaces
-server.listen(PORT, HOST, () => {
-  console.log(`Server running on http://${HOST}:${PORT}`);
-  console.log(`Server accessible from network on port ${PORT}`);
-});
+const HOST = process.env.HOST || '0.0.0.0';
 
+server.listen(PORT, HOST, () => {
+  console.log('='.repeat(50));
+  console.log(`🚀 Dating Techub Backend Server`);
+  console.log(`📍 Server running on http://${HOST}:${PORT}`);
+  console.log(`🌐 Accessible from network on port ${PORT}`);
+  console.log(`⏰ Started at ${new Date().toISOString()}`);
+  console.log('='.repeat(50));
+});

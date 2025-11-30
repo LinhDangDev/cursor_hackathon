@@ -1,3 +1,12 @@
+/**
+ * Speech-to-Text API Route
+ * Converts audio to text using Groq Whisper API
+ *
+ * POST /api/speech-to-text
+ * Body: FormData with 'audio' file
+ * Returns: { transcript: string, confidence: number }
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY
